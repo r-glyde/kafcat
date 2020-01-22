@@ -13,13 +13,14 @@ import org.apache.kafka.common.TopicPartition
 
 import scala.collection.immutable.SortedSet
 
-final case class ConsoleConsumer(brokers: List[String],
-                                 topic: String,
-                                 offset: Offset,
-                                 keyDeserializer: Array[Byte] => Json,
-                                 valueDeserializer: Array[Byte] => Json)(implicit cs: ContextShift[IO], t: Timer[IO]) {
+final case class ConsoleConsumer[F[_] : Concurrent : ContextShift : Timer : ConcurrentEffect](
+    brokers: List[String],
+    topic: String,
+    offset: Offset,
+    keyDeserializer: Array[Byte] => Json,
+    valueDeserializer: Array[Byte] => Json) {
 
-  private val settings = ConsumerSettings[IO, Array[Byte], Array[Byte]]
+  private val settings = ConsumerSettings[F, Array[Byte], Array[Byte]]
     .withBootstrapServers(brokers.mkString(","))
     .withGroupId(UUID.randomUUID().toString)
 
@@ -30,7 +31,7 @@ final case class ConsoleConsumer(brokers: List[String],
 
   private implicit val showJson: Show[Json] = _.noSpaces + "\n"
 
-  def run(blocker: Blocker): fs2.Stream[IO, Unit] =
+  def run(blocker: Blocker): fs2.Stream[F, Unit] =
     consumer.evalMap { c =>
       for {
         partitions      <- c.partitionsFor(topic)

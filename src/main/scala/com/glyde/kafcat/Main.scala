@@ -21,11 +21,11 @@ object Main
         IO(ExitCode.Error)
       case (brokers, topic, offset, maybeRegistryUrl, kD, vD) =>
         val maybeRegistryString = maybeRegistryUrl.map(_.value)
-        val consumer = ConsoleConsumer(brokers,
-                                       topic,
-                                       offset,
-                                       deserializerFrom(kD, topic, maybeRegistryString),
-                                       deserializerFrom(vD, topic, maybeRegistryString))
+        val consumer = ConsoleConsumer[IO](brokers,
+                                           topic,
+                                           offset,
+                                           deserializerFrom(kD, topic, maybeRegistryString),
+                                           deserializerFrom(vD, topic, maybeRegistryString))
         Blocker[IO].use(consumer.run(_).compile.drain.as(ExitCode.Success))
     }
 
