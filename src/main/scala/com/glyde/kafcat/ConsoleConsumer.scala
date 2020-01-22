@@ -4,25 +4,24 @@ import java.util.UUID
 
 import cats.Show
 import cats.effect._
-import cats.syntax.set._
-import fs2.io.{stdout, stdoutLines}
+import cats.implicits._
+import fs2.io.stdoutLines
 import fs2.kafka._
 import io.circe.Json
 import io.circe.literal._
 import org.apache.kafka.common.TopicPartition
 
 import scala.collection.immutable.SortedSet
-import scala.concurrent.duration._
 
 final case class ConsoleConsumer(brokers: List[String],
                                  topic: String,
+                                 offset: Offset,
                                  keyDeserializer: Array[Byte] => Json,
                                  valueDeserializer: Array[Byte] => Json)(implicit cs: ContextShift[IO], t: Timer[IO]) {
 
   private val settings = ConsumerSettings[IO, Array[Byte], Array[Byte]]
     .withBootstrapServers(brokers.mkString(","))
     .withGroupId(UUID.randomUUID().toString)
-    .withAutoOffsetReset(AutoOffsetReset.Earliest)
 
   private val consumer = consumerStream(settings)
 
@@ -40,18 +39,30 @@ final case class ConsoleConsumer(brokers: List[String],
         endOffsets      <- c.endOffsets(topicPartitions)
       } yield (startOffsets, endOffsets)
     }.flatMap {
-      case (startOffsets, _endOffsets) =>
-        val endOffsets = _endOffsets.map { case (tp, o) => tp.partition -> o }
-        val full = startOffsets.filter { case (tp, start) => start < endOffsets(tp.partition) }
-        SortedSet.from(full.keySet).toNes.fold[fs2.Stream[IO, Unit]](fs2.Stream.empty) { partitions =>
-          consumer
-            .evalTap(_.assign(partitions))
-            .flatMap { c =>
-              c.partitionedStream.map { ps =>
-                ps.takeThrough { cr =>
-                  (cr.record.offset + 1) < endOffsets(cr.record.partition)
-                }.map { cr =>
-                  json"""
+      case (startOffsets, endOffsets) =>
+        val _endOffsets = endOffsets.map { case (tp, o)          => tp.partition -> o }
+        val fullStart   = startOffsets.filter { case (tp, start) => start < endOffsets(tp) }
+        val startFrom = offset match {
+          case Offset.Earliest         => fullStart
+          case Offset.Latest           => Map.empty[TopicPartition, Long]
+          case Offset.FromBeginning(v) => fullStart.map { case (tp, o) => tp -> (o + v) }
+          case Offset.FromEnd(v) =>
+            endOffsets.filter { case (p, end) => startOffsets(p) < end }.map {
+              case (tp, o) => tp -> (if (o < v) o else o - v)
+            }
+        }
+        SortedSet.from(startFrom.keySet).toNes.foldMap { partitions =>
+          consumer.evalTap { c =>
+            for {
+              _ <- c.assign(partitions)
+              _ <- startFrom.toList.traverse_ { case (tp, o) => c.seek(tp, o) }
+            } yield ()
+          }.flatMap { c =>
+            c.partitionedStream.map { ps =>
+              ps.takeThrough { cr =>
+                (cr.record.offset + 1) < _endOffsets(cr.record.partition)
+              }.map { cr =>
+                json"""
                 {
                   "key": ${cr.record.serializedKeySize.fold(Json.Null)(_ => keyDeserializer(cr.record.key))},
                   "value": ${cr.record.serializedValueSize.fold(Json.Null)(_ => valueDeserializer(cr.record.value))},
@@ -61,10 +72,9 @@ final case class ConsoleConsumer(brokers: List[String],
                   "timestamp": ${cr.record.timestamp.createTime.getOrElse(-1L)}
                 }
               """
-                }
               }
             }
-            .take(full.size)
+          }.take(startFrom.size)
             .parJoinUnbounded
             .through(stdoutLines(blocker))
         }

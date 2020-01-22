@@ -11,6 +11,11 @@ dockerRepository := Some("glyderj")
 dockerLabels := Map("maintainer" -> "r-glyde")
 dockerUpdateLatest := true
 packageName in Docker := name.value
+dockerCommands ++= Seq(
+  Cmd("USER", "root"),
+  Cmd("RUN", "apk update && apk add bash")
+)
+
 
 resolvers += ("confluent-release" at "http://packages.confluent.io/maven/").withAllowInsecureProtocol(true)
 

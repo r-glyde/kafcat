@@ -23,23 +23,54 @@ object Config {
     override def defaultMetavar: String = "string"
   }
 
+  val offsetHelp =
+    "'earliest', 'latest' or long representing the offset from the beginning (if positive) or end (if negative)"
+
+  implicit val readOffset: Argument[Offset] = new Argument[Offset] {
+    override def read(input: String): ValidatedNel[String, Offset] = input.toLowerCase match {
+      case "earliest" => valid(Offset.Earliest)
+      case "latest"   => valid(Offset.Latest)
+      case value =>
+        value.toLongOption.fold[ValidatedNel[String, Offset]](invalidNel(s"Invalid offset, '$input': $offsetHelp")) {
+          v =>
+            if (v < 0) valid(Offset.FromEnd(v * -1))
+            else if (v > 0) valid(Offset.FromBeginning(v))
+            else valid(Offset.Earliest)
+        }
+    }
+    override def defaultMetavar: String = "string"
+  }
+
   val brokersOpt =
-    Opts.option[List[String]]("brokers", help = "comma separated list of brokers")
+    Opts.option[List[String]]("brokers", short = "b", help = "comma separated list of brokers")
 
   val topicNameOpt =
-    Opts.option[String]("topic", "name of topic to consume from")
+    Opts.option[String]("topic", short = "t", help = "name of topic to consume from")
+
+  val offsetOpt =
+    Opts
+      .option[Offset](
+        "offset",
+        short = "o",
+        help = "offset to read from - " + offsetHelp
+      )
+      .withDefault(Offset.Earliest)
 
   val registryUrlOpt =
-    Opts.option[String Refined Url]("schema-registry-url", help = "url of the schema registry").orNone
+    Opts.option[String Refined Url]("schema-registry-url", short = "r", help = "url of the schema registry").orNone
 
   val keyDeserializerOpt =
     Opts
-      .option[SupportedType]("key-deserializer", "deserializer for record keys - 'string' (default) or 'avro'")
+      .option[SupportedType]("key-deserializer",
+                             short = "k",
+                             help = "deserializer for record keys - 'string' (default) or 'avro'")
       .withDefault(SupportedType.String)
 
   val valueDeserializerOpt =
     Opts
-      .option[SupportedType]("value-deserializer", "deserializer for record values - 'string' (default) or 'avro'")
+      .option[SupportedType]("value-deserializer",
+                             short = "v",
+                             help = "deserializer for record values - 'string' (default) or 'avro'")
       .withDefault(SupportedType.String)
 
 }
